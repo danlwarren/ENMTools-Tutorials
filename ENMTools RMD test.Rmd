@@ -1,0 +1,43 @@
+---
+title: "ENMTools RMD test"
+author: "Dan Warren"
+date: "8/11/2020"
+output: html_document
+---
+
+# Setup
+
+```{r}
+library(ENMTools)
+set.seed(123)
+```
+# Modeling
+
+## Initial model
+
+```{r warning = FALSE, message = FALSE}
+monticola.gam <- enmtools.gam(iberolacerta.clade$species$monticola,
+                              euro.worldclim)
+interactive.plot.enmtools.model(monticola.gam)
+monticola.gam
+```
+
+## Predictor selection
+
+```{r warning = FALSE, message = FALSE}
+enmtools.vip(monticola.gam)
+raster.cor.plot(euro.worldclim)
+```
+
+## Final model
+
+```{r warning = FALSE, message = FALSE}
+reduced.env <- euro.worldclim[[c("bio10", "bio15", "bio2", "bio14", "bio5")]]
+monticola.gam <- enmtools.gam(iberolacerta.clade$species$monticola,
+                              reduced.env,
+                              test.prop = 0.3)
+interactive.plot.enmtools.model(monticola.gam)
+monticola.gam
+monticola.gam$response.plots
+```
+

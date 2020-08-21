@@ -1,0 +1,195 @@
+---
+title: "Testing hypotheses for pairs of species using ENMTools"
+output: html_document
+---
+
+# Building species
+
+Just in case we don't have our data saved from the last round:
+
+
+```{r warning = FALSE, message = FALSE}
+library(rgbif)
+library(ENMTools)
+
+ibm <- occ_search(scientificName = "Iberolacerta monticola",  limit = 1500)
+ibc <- occ_search(scientificName = "Iberolacerta cyreni",  limit = 1500)
+
+keep.cols <- c("species", "decimalLatitude", "decimalLongitude")
+
+ibm <- ibm$data[,keep.cols]
+ibm <- as.data.frame(unique(ibm))
+ibm <- ibm[complete.cases(ibm),]
+colnames(ibm)  <- c("species", "lat", "lon")
+
+
+ibc <- ibc$data[,keep.cols]
+ibc <- as.data.frame(unique(ibc))
+ibc <- ibc[complete.cases(ibc),]
+colnames(ibc)  <- c("species", "lat", "lon")
+
+all.worldclim <- raster::getData(name = "worldclim", download = TRUE, res = 10, var = "bio")
+spain.worldclim <- crop(all.worldclim, extent(-10, 4, 35, 45))
+
+plot(spain.worldclim[["bio1"]])
+points(ibc[,c("lon", "lat")], pch = 16, cex = 0.5, col = "red")
+points(ibm[,c("lon", "lat")], pch = 16, cex = 0.5, col = "blue")
+```
+
+Okay, let's turn both of these into enmtools.species objects
+
+```{r warning = FALSE, message = FALSE}
+monticola <- enmtools.species()
+monticola$presence.points <- ibm[,c("lon", "lat")]
+monticola$species.name <- "Iberolacerta monticola"
+monticola$range <- background.raster.buffer(monticola$presence.points, 50000, mask = spain.worldclim)
+plot(monticola)
+
+cyreni <- enmtools.species()
+cyreni$presence.points <- ibc[,c("lon", "lat")]
+cyreni$species.name <- "Iberolacerta cyreni"
+cyreni$range <- background.raster.buffer(cyreni$presence.points, 50000, mask = spain.worldclim)
+plot(cyreni)
+
+cyreni <- check.species(cyreni)
+monticola <- check.species(monticola)
+```
+
+Now let's build a quick ENM for each species.  Since the background for cyreni is so small, we've got to restrict ourselves to only using 100 background points.
+
+```{r warning = FALSE, message = FALSE}
+monticola.glm <- enmtools.glm(monticola, spain.worldclim, f = pres ~ poly(bio1, 4) + poly(bio8, 4), nback = 100, test.prop = 0.3)
+
+cyreni.glm <- enmtools.glm(cyreni, spain.worldclim, f = pres ~ poly(bio1, 4) + poly(bio8, 4), nback = 100, test.prop = 0.3)
+
+cyreni.glm
+monticola.glm
+
+```
+
+# Breadth and overlap
+
+Okay, now let's look at breadth of species ENMs in geographic space.
+
+```{r warning = FALSE, message = FALSE}
+raster.breadth(cyreni.glm)
+raster.breadth(monticola.glm)
+```
+
+How about in environment space?
+
+```{r warning = FALSE, message = FALSE}
+env.breadth(cyreni.glm, spain.worldclim)
+env.breadth(monticola.glm, spain.worldclim)
+```
+
+
+Now let's calculate niche overlap in geographic space and environment space.
+
+```{r warning = FALSE, message = FALSE}
+raster.overlap(monticola.glm, cyreni.glm)
+env.overlap(monticola.glm, cyreni.glm, spain.worldclim)
+```
+
+So the models are much more similar in geographic space than they are in environment space.  What could this mean?  DISCUSS
+
+
+
+
+# Identity test
+
+Let's do an identity/equivalency test!
+
+```{r warning = FALSE, message = FALSE}
+id.glm <- identity.test(monticola, cyreni, spain.worldclim, type = "glm", f = pres ~ poly(bio1, 4) + poly(bio8, 4), nreps = 20, nback = 100)
+id.glm
+```
+
+
+
+# Background test
+
+Let's do a background test!
+
+```{r warning = FALSE, message = FALSE}
+bg.glm <- background.test(monticola, cyreni, spain.worldclim, type = "glm", f = pres ~ poly(bio1, 4) + poly(bio8, 4), nreps = 20, nback = 100, test.type = "symmetric")
+bg.glm
+```
+
+
+
+
+
+# Ecospat
+
+```{r warning = FALSE, message = FALSE}
+ib.ecospat.id <- enmtools.ecospat.id(monticola, cyreni, spain.worldclim, nreps = 100, layers = c("bio1", "bio8"))
+ib.ecospat.id
+
+ib.ecospat.bg <- enmtools.ecospat.bg(monticola, cyreni, spain.worldclim, nreps = 100, layers = c("bio1", "bio8"))
+ib.ecospat.bg
+```
+
+
+# MOSES
+
+```{r warning = FALSE, message = FALSE}
+ib.moses <- moses.list(list(cyreni, monticola), spain.worldclim[[c(1,8)]])
+ib.moses
+```
+
+Okay not much exciting there.  Let's load in an enmtools.clade object though.
+
+```{r warning = FALSE, message = FALSE}
+data(iberolacerta.clade)
+iberolacerta.clade
+plot(iberolacerta.clade$tree)
+
+all.worldclim <- raster::getData(name = "worldclim", download = TRUE, res = 10, var = "bio")
+euro.worldclim <- crop(all.worldclim, extent(-10, 17, 39, 48))
+euro.worldclim <- euro.worldclim[[c(1,7,12,14)]]
+raster.cor.matrix(env = euro.worldclim)
+
+ib.moses.1 <- moses.list(list(iberolacerta.clade$species$aurelioi, iberolacerta.clade$species$aranica), env = euro.worldclim)
+
+ib.moses.1
+
+ib.moses.2 <- moses.list(list(iberolacerta.clade$species$monticola, iberolacerta.clade$species$martinezricai), env = euro.worldclim)
+
+ib.moses.2
+
+montmart <- combine.species(list(iberolacerta.clade$species$monticola, iberolacerta.clade$species$martinezricai))
+
+ib.moses.3 <- moses.list(list(montmart, iberolacerta.clade$species$cyreni), env = euro.worldclim)
+
+ib.moses.3
+
+araur <- combine.species(list(iberolacerta.clade$species$aranica, iberolacerta.clade$species$aurelioi))
+# Says to keep cyreni seprate
+
+
+ib.moses.4 <- moses.list(list(araur, iberolacerta.clade$species$bonnali), env = euro.worldclim)
+
+ib.moses.4
+# Says to keep separate but not super convincing
+
+```
+
+
+
+# ARC and AOC
+
+Let's start out by looking at range overlap as a function of time in Iberolacerta using raster maps:
+
+```{r warning = FALSE, message = FALSE}
+ib.arc <- enmtools.aoc(iberolacerta.clade, overlap.source = "range", nreps = 10)
+ib.arc
+```
+
+
+And follow that up by looking at niche overlap using Bioclim  models:
+
+```{r warning = FALSE, message = FALSE}
+ib.aoc.bc <- enmtools.aoc(iberolacerta.clade, overlap.source = "bc", nreps = 10, env = euro.worldclim)
+```
+

@@ -1,0 +1,286 @@
+---
+title: "ENM and SDM using ENMTools"
+output: html_document
+---
+
+# Loading data
+
+Just in case we don't have our data saved from the last round:
+
+
+```{r load-data}
+library(dismo)
+library(rgeos)
+library(rgbif)
+library(leaflet)
+
+ibm <- occ_search(scientificName = "Iberolacerta monticola",  limit = 1500)
+
+keep.cols <- c("species", "decimalLatitude", "decimalLongitude")
+ibm <- ibm$data[,keep.cols]
+ibm <- as.data.frame(unique(ibm))
+ibm <- ibm[complete.cases(ibm),]
+colnames(ibm)  <- c("species", "lat", "lon")
+head(ibm)
+
+all.worldclim <- raster::getData("worldclim", res = 10, var = "bio")
+spain.worldclim <- crop(all.worldclim, extent(-10, 4, 35, 45))
+
+m <- leaflet(ibm) %>%
+  addProviderTiles(provider = "Stamen.TerrainBackground") %>%
+  addRasterImage(spain.worldclim[[1]]) %>%
+  addCircleMarkers(lng = ~lon, lat = ~lat, radius = 5, stroke = FALSE, 
+                   fillOpacity = 1)
+
+m
+```
+
+Oops!  We've got one point down there on the west coast of Africa.  We could explore why that is, or we could just eliminate it.  For the sake of brevity, we'll do the latter.
+
+```{r}
+ibm <- ibm %>%
+  dplyr::filter(lat > 30)
+
+m <- leaflet(ibm) %>%
+  addProviderTiles(provider = "Stamen.TerrainBackground") %>%
+  addRasterImage(spain.worldclim[[1]]) %>%
+  addCircleMarkers(lng = ~lon, lat = ~lat, radius = 5, stroke = FALSE, 
+                   fillOpacity = 1)
+
+m
+```
+
+Nice!
+
+# Loading ENMTools
+
+Now we'll load ENMTools.  If you've already installed it and run install.extras(), you can run it just by typing:
+
+```{r}
+library(ENMTools)
+```
+
+If you haven't done either of those things, see the "Installing ENMTools" tutorial for details.
+
+# Building an enmtools.species object
+
+ENMTools automates a lot of the fiddly parts of building SDMs, but in order to do that it requires us to get our data into a specific format.
+
+```{r build-species}
+monticola <- enmtools.species()
+monticola
+```
+
+We now have an empty enmtools.species object.  It's basically just a list where we can store our data.  This makes sure that our data is in a predictable format for ENMTools' modeling functions.  Let's go ahead and add data to it now.
+
+```{r}
+monticola$presence.points <- ibm[,c("lon", "lat")]
+monticola$species.name <- "Iberolacerta monticola"
+monticola
+```
+
+
+We can define a range for our species using any raster, or we can build one using the background.raster.buffer function of ENMTools
+
+```{r}
+monticola$range <- background.raster.buffer(monticola$presence.points, 50000, mask = spain.worldclim)
+
+plot(monticola)
+```
+
+This range will be used for sampling background points in ENM construction, but we could also provide points manually if we wanted to using monticola$background.points <- something.
+
+It's always a good idea to run your species through the "check.species" function to make sure it's formatted correctly
+
+```{r}
+monticola <- check.species(monticola)
+```
+
+Not only does this tell us if we've messed something up, it reformats column names etc. so that they're in the appropriate format for the remaining ENMTools features.  The fact that everything is stored in a reliable place in these enmtools.species objects allows us to streamline a lot of operations.  For instance, instead of manually building a leaflet plot we can now just use the enmtools.species object to build one automatically.
+
+
+```{r}
+interactive.plot.enmtools.species(monticola)
+```
+
+# Building ENMs with ENMTools
+
+Okay, we've got a species.  Let's build a model!  We'll start with the two most popular climate envelope models.
+
+
+```{r bc}
+monticola.bc <- enmtools.bc(species = monticola, env = spain.worldclim, test.prop = 0.3, nback = 400)
+monticola.bc
+monticola.bc$response.plots[3]
+monticola.bc$response.plots[8]
+
+visualize.enm(monticola.bc, spain.worldclim, layers = c("bio3", "bio8"))
+```
+
+
+```{r dm}
+monticola.dm <- enmtools.dm(species = monticola, env = spain.worldclim, test.prop = 0.3, nback = 400)
+monticola.dm
+monticola.dm$response.plots[3]
+monticola.dm$response.plots[8]
+
+visualize.enm(monticola.dm, spain.worldclim, layers = c("bio3", "bio8"))
+```
+
+
+```{r glm}
+monticola.glm <- enmtools.glm(species = monticola, env = spain.worldclim)
+warnings()
+```
+
+We've got a warning here, which is due to the same reason as before - too many predictors and not enough data.  
+
+Let's look at the model first and then we'll work on that.
+```{r}
+monticola.glm
+
+names(monticola.glm)
+```
+
+
+
+Look at all of that stuff!
+
+```{r}
+monticola.glm$response.plots
+```
+
+
+
+We have interactive plots for models too!
+
+```{r}
+interactive.plot.enmtools.model(monticola.glm)
+```
+
+
+Let's try fitting a simpler model
+
+First let's look at the correlations between variables
+```{r}
+raster.cor.matrix(spain.worldclim)
+```
+
+
+
+That's handy, but maybe not as intuitive as plotting it
+```{r}
+raster.cor.plot(spain.worldclim)
+```
+
+This contains both a heatmap and an mds plot, let's look at both!
+
+Okay, now a simpler GLM.
+```{r}
+monticola.glm <- enmtools.glm(monticola, spain.worldclim, f = pres ~ poly(bio3, 2) + poly(bio8, 2) + poly(bio11, 2), nback = 400)
+
+interactive.plot.enmtools.model(monticola.glm)
+
+monticola.glm$response.plots
+```
+
+
+Notice that we have flat lines for most of the responses - that's because we only built a model using variables 1 and 8, but passed it all 19.
+
+Let's look at what our model looks like in environment space!
+
+```{r}
+visualize.enm(model = monticola.glm, env = spain.worldclim, layers = c("bio8", "bio11"))
+```
+
+
+
+Now let's try one with some test data for evaluation
+```{r}
+monticola.glm <- enmtools.glm(monticola, spain.worldclim, f = pres ~ poly(bio3, 2) + poly(bio8, 2) + poly(bio11, 2), nback = 400, test.prop = 0.3)
+
+monticola.glm
+
+interactive.plot.enmtools.model(monticola.glm)
+```
+
+
+Hey wait!  What are these environment space model fit metrics?  We'll get to that in a little while.
+
+ENMTools also allows us to build models using other methods.  
+
+```{r gam}
+monticola.gam <- enmtools.gam(species = monticola, env = spain.worldclim, f = pres ~ bio3 + bio8 + bio11, test.prop = 0.3, nback = 400)
+monticola.gam
+monticola.gam$response.plots
+
+visualize.enm(monticola.gam, spain.worldclim, layers = c("bio11", "bio8"))
+```
+
+
+If you have maxent installed and setup with dismo, you can even build maxent models.
+```{r mx}
+monticola.mx <- enmtools.maxent(species = monticola, env = spain.worldclim, test.prop = 0.3, nback = 400)
+monticola.mx
+monticola.mx$response.plots
+
+visualize.enm(monticola.mx, spain.worldclim, layers = c("bio3", "bio8"))
+
+```
+
+Note that what ENMTools is doing for ENM construction is just acting as a front end for dismo and ppmlasso: the interface automates a bunch of stuff, but the underlying math is just dismo and ppmlasso.  Stored in the enmtools.model object (monticola.mx), there is a model we can project using dismo's predict function.  We can even use it to bring up the maxent model page in a web browser.
+
+You can even build poisson point process models using ppmlasso.  Note: ppmlasso can take a LONG time to fit models with a bunch of predictors, so it's best to pass a formula here instead of using all 19 variables.
+
+```{r ppm}
+monticola.ppm <- enmtools.ppmlasso(species = monticola, env = spain.worldclim, f = pres ~ bio3 + bio8 + bio11, test.prop = 0.3, nback = 400, gamma = 0)
+monticola.ppm
+monticola.ppm$response.plots
+
+visualize.enm(monticola.ppm, spain.worldclim, layers = c("bio3", "bio8"))
+```
+
+
+
+
+One final option is to use Blonder et al.'s **hypervolume** package.  At present these are implemented as enmtools.hypervolume objects, rather than as enmtools.model objects.  They don't have as many cool options or visualizations, as many of the options for models don't make much sense here.  It's worth knowing that you can build them, though, as we will eventually be using them for some of the hypothesis tests.
+
+```{r}
+enmtools.hypervolume(monticola, spain.worldclim[[c(1,8,12,17)]])
+```
+
+
+# Projections across space and time
+
+Often we have applications where we want to take a model made in one time and place and project it to the distribution of environments in another time and place.  This is relatively easy to do in ENMTools!  For instance we can extrapolate our model across the entire world.
+```{r}
+mx.pred <- predict(monticola.mx, all.worldclim)
+
+mx.pred$suitability
+```
+
+It's a bit crazy to think that these lizards are going to live at the north pole, so let's look at the built-in plots that visualize the environments where the model was trained vs. where it's being projected.
+
+```{r}
+mx.pred$threespace.plot
+```
+
+We can look at the suitability projected in the future as well. **Note**: this involves downloading new layers so this bit of code may take a while to run.
+
+```{r}
+spain.future <- raster::getData('CMIP5', var = "bio", res = 10, rcp = 85, model = 'AC', year = 70)
+
+spain.extent <- extent(-10, 4, 35, 45)
+spain.future <- crop(x = spain.future, y = spain.extent)
+names(spain.future) <- names(spain.worldclim)
+
+future.pred <- predict(monticola.mx, spain.future)
+future.pred$suitability
+future.pred$threespace.plot
+```
+
+Note that you can call **predict** on the model objects stored inside ENMTools models as well, but you often need to change the order.  For instance to predict using a maxent model, you pass in the environmental rasters first and the model second.  This is just a dismo thing to be aware of, there's no particular logic to either ordering that you need to understand.
+
+```{r mx-html}
+plot(predict(all.worldclim, monticola.mx$model))
+```

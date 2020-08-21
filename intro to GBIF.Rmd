@@ -1,0 +1,90 @@
+---
+title: "GBIF demo"
+output: html_document
+---
+
+Let's check out GBIF and see if we can get some data.  We're going to use some lizards of the genus iberolacerta, which occur in Spain and France.
+
+Go to GBIF page, create an account if you don't already have one.
+
+Click "Get Data", then "Species".  
+
+Search "Iberolacerta".  We want to look at the species entries, so click "species" in the results table.  
+
+You'll notice that there are twelve species, but if you look at the headings only 8 of those are accepted species - the rest are synonyms.  Click "status - accepted" to filter just those.
+
+Click on the link for one of the species.  It'll be a bit slow, but eventually it will load a page showing you a bunch of information about the available data for that species.
+
+Notice that, on the map, there's a timeline.  If you only want records from a certain time period, you can drag the top or bottom end of that timeline to restrict your search.
+
+Now click "# Occurrences" at the top right of the page in order to see the actual data for the chosen species, area, and time period.
+
+On this page you'll find even more options for filtering your data.  After tweaking these, you can hit "download" to get a local copy of your data file.  We'll stick to "simple csv" format.
+
+You will be emailed a link to a zip file.  Download this and unzip it, and you'll find a .csv file containing your species data.  
+
+Before we open that in Excel, let's take a look at it in a text editor first.  Is this actually a csv file?  Mine isn't!  I have to change the file extension to .txt to get it to open in Excel.
+
+Explore the file a bit.
+
+--------------
+
+There's an easier way to do all of this, though, using the rgbif package!
+
+```{r}
+library(rgbif)
+library(leaflet)
+library(dplyr)
+library(viridis)
+```
+
+```{r}
+ibl <- occ_search(scientificName = "Iberolacerta",  limit = 1500)
+names(ibl)
+colnames(ibl$data)
+
+# We can check to make sure they're all the right genus
+unique(ibl$data$genus)
+
+# Okay, what about species names?
+unique(ibl$data$species)
+
+# Let's make a smaller data table with just the bits we need
+ibl.small <- subset(ibl$data, select = c("species", "decimalLatitude", 
+                                         "decimalLongitude"))
+
+# That tibble stuff annoys me, so I'm just going to make a df out of it
+ibl.small <- as.data.frame(ibl.small)
+colnames(ibl.small)  <- c("species", "lat", "lon")
+
+# But wait!  We have NAs!
+complete.cases(ibl.small)
+ibl.small <- ibl.small[complete.cases(ibl.small),]
+
+# We also have a lot of dupes!
+dim(ibl.small)
+ibl.small <- unique(ibl.small)
+dim(ibl.small)
+
+table(ibl.small$species)
+```
+
+Let's visualize our species using leaflet.  In order to color the species differently we need to define a palette.  We're going to use viridis for that.  The syntax to do this is a bit weird but the main thing you need to know is that the (8) in the palette definition is the number of levels we want, which is the number of unique species we have.
+
+```{r}
+
+
+pal <- leaflet::colorFactor(viridis_pal(option = "C")(8), domain = ibl.small$species)
+
+m <- leaflet(ibl.small) %>%
+  addProviderTiles(provider = "Stamen.TerrainBackground") %>%
+  addCircleMarkers(lng = ~lon, lat = ~lat, radius = 5, stroke = FALSE, 
+                   color = ~pal(species), fillOpacity = 1) %>%
+  addLegend("bottomright", pal = pal, values = ~species,
+    title = "Species",
+    opacity = 1)
+
+m
+```
+
+

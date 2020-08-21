@@ -1,0 +1,145 @@
+---
+title: "Variable Selection"
+author: "Dan Warren"
+date: "8/6/2020"
+output: html_document
+---
+
+First let's load in some predictor rasters and our enmtools.species object.  We're going to do this the easy way, by just using the data built into ENMTools.  The variable importance stuff we're going to use is currently implemented on a side branch of ENMTools, so we're going to have to install it from github.
+
+```{r echo = FALSE}
+library(reshape2)
+library(viridis)
+```
+
+
+```{r warning = FALSE}
+devtools::install_github("danlwarren/ENMTools", ref = "vip")
+library(ENMTools)
+library(ggplot2)
+
+# Doing this to suppress some rgdal warnings due to the recent switch to PROJ6.
+rgdal::set_thin_PROJ6_warnings(FALSE)
+
+data(iberolacerta.clade)
+data(euro.worldclim)
+monticola <- iberolacerta.clade$species$monticola
+
+interactive.plot.enmtools.species(monticola)
+```
+
+Okay, cool.  Now we want to build a model for our species, but there's an issue; we don't really know what environmental predictors out of those 19 bioclim variables actually do the best job of predicting our species distribution!  We could just use them all, but there are issues with that.
+
+* While some methods have automatic feature selection, many do not.  Reducing the number of predictors can help a lot to improve model fit for the ones that don't, and in some cases some methods may simply barf and die if you give them too many predictors.
+* Having many collinear predictors can confuse some methods and result in poor model fit and lack of interpreatability/poor transferability.
+* With Bioclim (and 'domain' as implemented in dismo), omission rates tend to increase with more predictors.
+
+One approach is to do dimensionality reduction (e.g., PCA or MDS) on your predictor set, but there are issues with doing that.  A better approach is to simply remove predictors you don't need.  Ideally you'd like to do this based on biological insight, but that's not always possible.  We can actually do a decent job of reducing our candidate predictor set just using statistical approaches, though!
+
+First let's visualize the correlations between our predictors.
+
+```{r warning = FALSE}
+euro.cor <- raster.cor.plot(euro.worldclim)
+euro.cor$cor.mds.plot
+```
+
+This plot uses MDS scaling of the correlation matrix to plot the variables into a two-dimensional space.  Variables that are closer together in this space tend to be more correlated with each other, while variables that are further away are less correlated.  We can also visualize the correlation matrix directly:
+
+```{r warning = FALSE}
+euro.cor$cor.heatmap
+```
+
+Okay so clearly there are some fairly highly correlated subsets of our variables here.  We'd actually like to be able to choose which ones of these are more important for a given model, though!  The traditional maxent analysis involves eliminating each variable in turn to see how good a model is without it. ENMTools does something similar, but slightly different using methods from the vip package. 
+First we need to build a model, and then we can look at variable importance for that model using the **enmtools.vip** function.  We're going to build a model with all 19 variables first.
+
+```{r warning = FALSE}
+monticola.gam <- enmtools.gam(monticola, euro.worldclim,
+                              test.prop = 0.3)
+interactive.plot.enmtools.model(monticola.gam)
+```
+
+```{r fig.height=12}
+set.seed(123)
+enmtools.vip(monticola.gam, nsim = 10, method = "permute")
+```
+Notice that four of these variables (10, 15, 5, and 14) are actually fairly highly correlated in our **raster.cor.plot output** above.  That means we'll probably just want to pick one or two of those.  Predictor bio10 has the highest support, so that seems like a no-brainer.  We can see that bio14 is super close to it in the MDS plot, though, so let's try getting rid of that one.
+
+```{r warning = FALSE}
+simple.gam.1 <- enmtools.gam(monticola, euro.worldclim,
+                           f = pres ~ s(bio10) + s(bio15) + s(bio2) + s(bio5),
+                           test.prop = 0.3)
+interactive.plot.enmtools.model(simple.gam.1)
+```
+
+The plot looks pretty similar!  Let's look at the test AUCs, just to see what the effect was.
+
+```{r}
+monticola.gam$test.evaluation
+simple.gam.1$test.evaluation
+```
+
+The test AUC isn't that different, and we've chucked out 15 of the variables!  Let's try the next one, which I'm gonna say is bio5.
+
+
+```{r warning = FALSE}
+simple.gam.2 <- enmtools.gam(monticola, euro.worldclim,
+                           f = pres ~ s(bio10) + s(bio15) + s(bio2),
+                           test.prop = 0.3)
+interactive.plot.enmtools.model(simple.gam.2)
+```
+
+
+```{r}
+monticola.gam$test.evaluation
+simple.gam.2$test.evaluation
+```
+
+Still not bad at all!  Now we're down to just three variables, and the two closest together in the MDS plot are bio10 and bio15.
+
+
+```{r warning = FALSE}
+simple.gam.3 <- enmtools.gam(monticola, euro.worldclim,
+                           f = pres ~ s(bio10) + s(bio2),
+                           test.prop = 0.3)
+interactive.plot.enmtools.model(simple.gam.3)
+```
+
+Okay that changed some stuff. 
+
+```{r}
+monticola.gam$test.evaluation
+simple.gam.3$test.evaluation
+```
+
+This is somewhere where I might say "okay, it looks like we have made our model about as simple as we can without taking a substantial performance hit".
+
+So how do these variable important test actually work?  It's actually quite simple but very clever.  You can see the **vip** package for more information, but for a really quick demo let's just simulate some linearly correlated data.
+
+```{r}
+x <- runif(100)
+y <- (6 * x) + rnorm(100)
+
+qplot(x, y)
+```
+
+Okay, so those are clearly correlated.
+
+```{r}
+summary(lm(y ~ x))
+```
+
+The permutation test implemented by **vip** that we're accessing through ENMTools essentially compares the fit of this real model to a model where the *order of the x values is randomized*.  This keeps the distribution of x identical to the empirical data, while removing any relationship between x and y.
+
+```{r}
+rand.x <- sample(x, 100)
+qplot(rand.x, y)
+
+
+summary(lm(y ~ rand.x))
+```
+
+
+By comparing the correlation coefficient for the model where x is held at its empirical values to the model where x is randomized, we can see how much difference x makes to the predictive power of the model.  Obviously this is overkill for a simple one-predictor linear model, but for more complex models (like ENM/SDM) we do this for each predictor separately and keep track of how much the model's predictive power changes as we randomize each predictor.  The variable importance values for each predictor just measure how much the predictive power of the model changes when we randomize that predictor.
+
+We do this a number of times to get an idea of how variable these values are, which gives us the distributions you see in the vip plot.
+

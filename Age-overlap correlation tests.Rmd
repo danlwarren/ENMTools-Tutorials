@@ -1,0 +1,87 @@
+---
+title: "Age-overlap correlation tests"
+output: html_document
+---
+
+
+Just in case we don't have our data saved from the last round:
+
+
+```{r}
+library(rgeos)
+library(rgbif)
+library(ENMTools)
+library(ape)
+
+all.worldclim <- raster::getData(name = "worldclim", download = TRUE, res = 10, var = "bio")
+euro.worldclim <- crop(all.worldclim, extent(-10, 17, 39, 48))
+raster.cor.matrix(env = euro.worldclim)
+```
+
+Just to keep stuff simple + running well we're going to cut down the number of variables.
+
+```{r}
+euro.worldclim <- euro.worldclim[[c(1,7,12,14)]]
+raster.cor.matrix(env = euro.worldclim)
+```
+
+Load in iberolacerta.clade.Rd
+
+```{r}
+data("Iberolacerta.clade")
+
+iberolacerta.clade
+
+for(i in iberolacerta.clade$species){
+  i$range <-  background.raster.buffer(i$presence.points, 50000, mask = euro.worldclim)
+}
+```
+
+
+Old skool ARC
+
+```{r}
+range.aoc <- enmtools.aoc(iberolacerta.clade, nreps = 10, overlap.source = "range")
+```
+
+ARC on point data
+
+```{r}
+point.aoc <- enmtools.aoc(iberolacerta.clade, nreps = 10, overlap.source = "points")
+
+point.aoc
+```
+
+Now we can do it with ENMs
+
+```{r}
+glm.aoc <- enmtools.aoc(iberolacerta.clade, nreps = 10, overlap.source = "glm",  env = euro.worldclim)
+```
+
+
+We can even do it with different metrics for ENMs
+
+```{r}
+# env.mx.aoc <- enmtools.aoc(iberolacerta.clade, nreps = 10, overlap.source = "mx",  env = euro.worldclim, metric = "env.D")
+```
+
+We're getting some issues because we don't have enough points for some of these species.  What if we drop them?
+
+```{r}
+ib.clade.small <- iberolacerta.clade
+ib.clade.small$species$martinezricai <- NULL
+ib.clade.small$species$horvathi <- NULL
+ib.clade.small$tree <- drop.tip(ib.clade.small$tree, "martinezricai")
+ib.clade.small$tree <- drop.tip(ib.clade.small$tree, "horvathi")
+ib.clade.small <- check.clade(ib.clade.small)
+ib.clade.small
+
+# env.mx.aoc <- enmtools.aoc(ib.clade.small, nreps = 10, overlap.source = "mx",  env = euro.worldclim, metric = "env.D")
+# env.mx.aoc
+```
+
+
+```{r}
+env.bc.aoc <- enmtools.aoc(ib.clade.small, nreps = 10, overlap.source = "bc", env = euro.worldclim, metric = "env.D")
+env.bc.aoc
+```

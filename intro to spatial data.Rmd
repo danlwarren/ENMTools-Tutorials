@@ -1,0 +1,243 @@
+---
+title: "Vector, point, and raster data"
+output:
+  html_document:
+    df_print: paged
+---
+
+In this lesson, we are going to explore spatial data.  These are the three main spatial data types.  There's a lot to learn here, and we're just just going to do the bits that are going to be most crucial for the coming lessons.  For a more thorough tutorial I highly recommend the tutorials listed by Francisco Rodriguez-Sanchez here:
+
+https://github.com/Pakillo/GISwithR/blob/master/RasGIS.Rmd#some-tutorials
+
+And in particular Robert Hijmans' online texts at 
+
+http://www.rspatial.org/
+
+Although a few of the examples don't seem to be working now due to updates with the required packages (i.e., changes in syntax in newer versions).
+
+```{r}
+library(dismo)
+library(rgeos)
+library(maptools)
+library(ggplot2)
+
+
+set.seed((12345))
+spain.map <- gmap("Spain")
+plot(spain.map)
+```
+
+Not that useful, let's get a satelite map.
+
+```{r}
+spain.map <- gmap("Spain", type = "satellite")
+plot(spain.map)
+
+class(spain.map)
+
+attributes(spain.map)
+
+# We can use the @ symbol to access different aspects of our raster
+slotNames(spain.map)
+spain.map@ncols
+
+spain.map@extent
+
+# NOTE: drawExtent doesn't work in notebooks!
+# new.extent <- drawExtent()
+```
+
+ZOOM AND ENHANCE
+
+```{r}
+spain.extent <- extent(-10, 4, 35, 45)
+spain.map <- gmap(spain.extent, type = "satellite", latlon = TRUE)
+plot(spain.map)
+```
+
+Adding some points
+
+```{r}
+x <- rnorm(n = 20, mean = -3, sd = 1)
+y <- rnorm(n = 20, mean = 40, sd = 1)
+pts <- cbind(x, y)
+
+head(pts)
+plot(spain.map)
+points(Mercator(pts), pch=20, col = "white")
+```
+
+
+Okay, that's a quick raster and some points, but let's get a polygon now.  Oddly enough, it's the "raster" package that makes this super easy.  The getData function hooks into several online databases of spatial information, including the Global Administrative areas.
+
+In my case, I have to call getData using raster::getData so that it knows I want the "getData" function from package "raster".  This is because another package called "nlme" also has a getData function, and R might call it by default instead.  This may not be necessary for you.
+
+```{r}
+library(raster)
+spain.country <- raster::getData('GADM', country='ESP', level=0)
+plot(spain.country)
+```
+
+
+Might be super slow, because the level of detail is very, very high!  Let's simplify it.  We'll use a function called gSimplify.  In gSimplify, the "tol" parameter controls how far the resulting curve is allowed to diverge from the original.  Smaller values = more complex curves = larger and slower objects in memory.  Play around with the tol value and see what happens!
+
+```{r}
+library(rgeos)
+spain.country.simple <- gSimplify(spain.country, tol=0.01, topologyPreserve=TRUE)
+plot(spain.country.simple)
+```
+
+There's a list of country codes here:
+
+http://userpage.chemie.fu-berlin.de/diverse/doc/ISO_3166.html
+
+We can get finer levels of resolution as well.
+
+```{r}
+spain.country <- gSimplify(spain.country, tol=0.01, topologyPreserve=TRUE)
+
+spain.regions <- raster::getData('GADM', country='ESP', level=1)
+spain.regions <- gSimplify(spain.regions, tol = 0.005, topologyPreserve = TRUE)
+plot(spain.regions)
+points(pts, col = "red", pch = 20)
+
+
+class(spain.regions)
+slotNames(spain.regions)
+spain.regions@polygons
+
+names(spain.regions)
+spain.regions[1]
+plot(spain.regions[1])
+```
+
+
+You can use the same function to get Worldclim data, which people use for SDMs and other stuff.
+
+```{r}
+all.worldclim <- raster::getData("worldclim", res = 10, var = "bio")
+all.worldclim
+class(all.worldclim)
+names(all.worldclim)
+plot(all.worldclim[["bio1"]])
+```
+
+That's the whole world, though.  We can clip that down using our Spain polygon.
+
+```{r}
+spain.worldclim <- crop(x = all.worldclim,spain.country)
+plot(spain.worldclim[["bio1"]])
+```
+
+
+We might want to leave out the canaries and the bit of Africa though, so let's reuse our spain.extent object.
+
+```{r}
+spain.worldclim <- crop(spain.worldclim, spain.extent)
+plot(spain.worldclim[["bio1"]])
+points(pts, col = "red", pch = 10)
+plot(spain.regions, add = TRUE)
+```
+
+What if we want the environmental data from our worldclim layer at each of our point locations?
+
+```{r}
+env.points <- extract(spain.worldclim, pts)
+env.points
+
+# We can also attach that to our lat/lon data
+
+env.points <- cbind(pts, env.points)
+env.points
+```
+
+
+Let's see how our fake species' environmental distribution differs from the suite of available habitats.  We'll need some points randomely chosen from the background.
+
+```{r}
+bg.pts <- sampleRandom(spain.worldclim, xy = TRUE, size = 1000)
+head(bg.pts)
+```
+
+Notice how this got us our x and y as well as our environmental data?  Pretty slick.
+
+```{r}
+plot(spain.worldclim[[1]])
+points(bg.pts[,1:2], pch = 16)
+```
+
+Okay, let's combine our presence points and our background points.  First let's make a presence/absence variable.
+
+
+```{r}
+pa <- c(rep(1, nrow(env.points)), rep(0, nrow(bg.pts)))
+
+pa
+
+```
+
+Now we'll attach it to our data.
+
+```{r}
+pa.env.points <- rbind(env.points, bg.pts)
+pa.env.points <- cbind(pa.env.points, pa)
+pa.env.points <- data.frame(pa.env.points)
+head(pa.env.points)
+```
+
+
+Let's plot where we find our species vs. the available environment.  Try visualizing several different environmental variables.
+
+```{r}
+ggplot(pa.env.points, aes(x=bio1, fill=as.factor(pa))) + geom_histogram(binwidth=2, alpha=.5, position="identity")
+```
+
+
+
+Let's try something different now - can we get a localized convex hull range map for our species?  We can, with the adehabitatHR package!
+
+```{r}
+
+library(adehabitatHR)
+
+pts.locoh <- LoCoH.k(SpatialPoints(pts), k = 8)
+pts.locoh.dissolved <- unionSpatialPolygons(pts.locoh, IDs = rep(1, length(pts.locoh)))
+plot(spain.worldclim[["bio1"]])
+plot(pts.locoh.dissolved, add = TRUE, col = "red")
+points(pts, col = "blue", pch = 16)
+```
+
+
+Can we repeat the exercise above where we're comparing species' environmental distributions to the available environment, but use the convex hull instead of the raster for our background data?  It takes a bit more work, but we can.
+
+```{r}
+hull.pts <- spsample(pts.locoh.dissolved, n = 1000, type = "random")
+class(hull.pts)
+attributes(hull.pts)
+plot(spain.worldclim[[1]])
+points(hull.pts@coords, pch = 16)
+```
+
+First we'll extract our environmental data for our new background points.
+```{r}
+hull.env <- cbind(hull.pts@coords, extract(spain.worldclim, hull.pts@coords))
+head(hull.env)
+```
+
+
+Then we'll repeat the steps above to visualize presence and background.  We'll just rebuild the env.points data frame since it's got the other pa data in it.
+```{r}
+env.points <- cbind(pts, extract(spain.worldclim, pts))
+hull.pa <- c(rep(1, nrow(env.points)), rep(0, nrow(hull.env)))
+hull.pa.env <- rbind(env.points, hull.env)
+hull.pa.env <- cbind(hull.pa.env, hull.pa)
+head(hull.pa.env)
+```
+
+And now to plot!  Note that ggplot likes data frames, not matrices, so we have to convert first.
+
+
+```{r}
+hull.pa.env <- data.frame(hull.pa.env)
+ggplot(hull.pa.env, aes(x=bio1, fill=as.factor(pa))) + geom_histogram(binwidth=2, alpha=.5, position="identity")
+```

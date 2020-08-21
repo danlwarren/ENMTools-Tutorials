@@ -1,0 +1,87 @@
+---
+title: "Background sampling for ENMTools Models"
+author: "Dan Warren"
+date: "8/12/2020"
+output: html_document
+---
+
+
+```{r}
+library(raster)
+library(ENMTools)
+```
+
+
+# Implicit choice of background (points > range > env)
+
+Creating a species object with no background
+```{r warning = FALSE, message = FALSE}
+monticola <- iberolacerta.clade$species$monticola
+monticola$range <- NA
+interactive.plot.enmtools.species(monticola)
+```
+
+
+If no range raster or background points exist, ENMTools just samples background points from the full env extent.
+```{r warning = FALSE, message = FALSE}
+monticola.gam <- enmtools.gam(monticola, euro.worldclim)
+interactive.plot.enmtools.model(monticola.gam)
+```
+
+
+If we add a range raster it defaults to sampling background from that instead.
+
+```{r warning = FALSE, message = FALSE}
+monticola$range <- background.raster.buffer(monticola$presence.points, 100000, euro.worldclim)
+monticola.gam <- enmtools.gam(monticola, euro.worldclim)
+interactive.plot.enmtools.model(monticola.gam)
+```
+
+
+However if we add background points to the species object, it will default to using those first.  Here I'm sampling some background points from a raster of population density across this area of Europe.
+
+```{r warning = FALSE, message = FALSE}
+europop <- raster("~/GitHub/ENMTools Tutorials/europop.asc")
+
+pop.points <- rasterToPoints(europop, xy = TRUE)
+colnames(pop.points) <- c("lon", "lat", "pop")
+pop.points <- as.data.frame(pop.points)
+
+# Just dividing the populations by the maximum so they range 0-1
+pop.points$pop <- pop.points$pop/max(pop.points$pop)
+
+# Sampling in proportion to population density
+bias.points <- pop.points[sample(1:nrow(pop.points), 1000, prob = pop.points$pop),]
+plot(europop)
+points(bias.points, pch = 16)
+
+monticola$background.points <- bias.points
+monticola <- check.species(monticola)
+monticola.gam <- enmtools.gam(monticola, euro.worldclim)
+interactive.plot.enmtools.model(monticola.gam)
+```
+
+
+# Explicit choice of background using bg.source
+
+Okay now let's look at the species object.
+```{r warning = FALSE, message = FALSE}
+monticola
+```
+
+
+
+It has presence points, background points, and a range raster.  We've been using ENMTools implicit ranking of those things til now (points > range raster > env raster), but we can call them manually as well!  We just have to supply the appropriate argument to **bg.source**.
+
+```{r warning = FALSE, message = FALSE}
+monticola.gam <- enmtools.gam(monticola, euro.worldclim, bg.source = "range")
+interactive.plot.enmtools.model(monticola.gam)
+
+monticola.gam <- enmtools.gam(monticola, euro.worldclim, bg.source = "env")
+interactive.plot.enmtools.model(monticola.gam)
+
+monticola.gam <- enmtools.gam(monticola, euro.worldclim, bg.source = "points")
+interactive.plot.enmtools.model(monticola.gam)
+```
+
+

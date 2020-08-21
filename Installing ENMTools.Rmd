@@ -1,0 +1,26 @@
+---
+title: "Installing ENMTools"
+author: "Dan Warren"
+date: "8/3/2020"
+output: html_document
+---
+
+ENMTools is now on CRAN, so basic installation is really straightforward.  The only real wrinkle here is that ENMTools depends on a lot of other packages to do the cool things it does.  In order to keep the dependencies low for CRAN, we have left those packages as "suggests" instead of "depends".  They will need to be installed for ENMTools to really use its full potential, though.  We've tried to make that easy with the function **install.extras**. All you need to do is make sure you're connected to the internet and then type
+
+```{r, eval=FALSE}
+install.packages("ENMTools")
+library(ENMTools)
+install.extras()
+```
+
+Sometimes you might want to use some of the features that are still in development and haven't reached CRAN yet.  For those, you'll want to install the development version from github using the **devtools** package.  You'll then want to run **install.extras** again to make sure you've got everything the development version needs.
+
+```{r, eval=FALSE}
+install.packages("devtools")
+library(devtools)
+devtools::install_github(repo = "danlwarren/ENMTools", ref = "develop")
+library(ENMTools)
+install.extras()
+```
+
+

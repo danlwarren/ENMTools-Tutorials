@@ -1,0 +1,84 @@
+---
+title: "Using SOS splines in a GAM"
+author: "Dan Warren"
+date: "8/11/2020"
+output: html_document
+---
+
+In this tutorial we're going to use splines on a sphere (SOS) to fit a GAM using strictly spatial variables, and then compare the fit of that model to one that includes environmental predictors.
+
+# Loading in packages and creating species
+
+```{r warning = FALSE, message = FALSE}
+library(ENMTools)
+
+monticola <- iberolacerta.clade$species$monticola
+
+interactive.plot.enmtools.species(monticola)
+```
+
+# Preparing environment and lat/lon rasters
+
+```{r warning = FALSE, message = FALSE}
+# Just using a subset of our predictors
+small.env <- euro.worldclim[[c("bio10", "bio15", "bio2")]]
+
+# Now we're going to generate rasters for latitude and longitude
+# we start by using one of our environment layers as a template
+lat <- lon <- small.env[[1]]
+xy <- coordinates(small.env)
+
+# Now we change the values in our raster to the coordinates of each grid cell
+# the lon layer gets longitudes from xy
+lon[] <- xy[,1]
+
+# and the lat layer gets latitudes
+lat[] <- xy[,2]
+
+# Now we'll stack them up and rename them
+# It's important to know that ENMTools is set up to deal with layers named "x" and "y" or any variation of "lat" and "lon" automatically.  If we don't want to confuse it, we need to name these something else.
+latlon <- stack(c(lon, lat))
+names(latlon) <- c("fakelon", "fakelat")
+
+# And now we'll trim them to the same grid cells as our environmental data
+latlon <- mask(latlon, euro.worldclim[[1]])
+
+# And we'll stack everything up for modeling
+small.env <- stack(small.env, latlon)
+plot(small.env)
+```
+
+
+# Building models
+
+## Space only
+
+Now we'll make a gam using splines on a sphere (sos) to fit presence as a function of fakelon and fakelat
+```{r}
+monticola.gam.latlon.only <- enmtools.gam(monticola, small.env,
+                                     presence ~ s(fakelon, fakelat, bs = "sos"),
+                                     test.prop = 0.3)
+monticola.gam.latlon.only
+```
+
+## Space plus environment
+
+And now we'll do the same but also add our environmental predictors
+```{r}
+monticola.gam.latlon.env <- enmtools.gam(monticola, small.env,
+                                     presence ~ s(bio10, k = 4) + s(bio15, k = 4) 
+                                     + s(bio2, k = 4) + s(fakelon, fakelat, bs = "sos"),
+                                     test.prop = 0.3)
+monticola.gam.latlon.env
+```
+
+# AIC comparison
+
+Side note: you can actually use AIC to evaluate these models and see whether the extra parameters are worth it!  Remember that a lower AIC is better, and a change in AIC of ~2 is considered a significant improvement.
+
+```{r}
+monticola.gam.latlon.only$model$aic
+monticola.gam.latlon.env$model$aic
+```
+
+

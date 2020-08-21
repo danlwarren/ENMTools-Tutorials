@@ -1,0 +1,228 @@
+---
+title: "Intro to ENM and SDM"
+output: html_document
+---
+
+This is going to be just a quick walk-through.  For a full tutorial, check out Jane Elith and Robert Hijmans' vignette at:
+
+https://cran.r-project.org/web/packages/dismo/vignettes/sdm.pdf
+
+
+```{r}
+library(dismo)
+library(rgeos)
+library(rgbif)
+
+ibm <- occ_search(scientificName = "Iberolacerta monticola",  limit = 1500)
+
+ibm <- subset(ibm$data, select = c("species", "decimalLatitude", 
+                                         "decimalLongitude"))
+ibm <- as.data.frame(unique(ibm))
+ibm <- ibm[complete.cases(ibm),]
+colnames(ibm)  <- c("species", "lat", "lon")
+
+
+all.worldclim <- raster::getData("worldclim", res = 10, var = "bio")
+spain.worldclim <- crop(all.worldclim, extent(-10, 4, 35, 45))
+
+plot(spain.worldclim[["bio1"]])
+points(ibm[,c("lon", "lat")], pch = 16)
+```
+
+Okay, so we've got environmental data and occurrence data.  How do we build a model?
+
+Some methods (e.g., bioclim or domain) can work with just the data we've got.  
+
+```{r}
+ibm.bc <- bioclim(spain.worldclim, ibm[,c("lon", "lat")])
+plot(ibm.bc)
+# Notice that the plot is only two variables, but our model uses 19!
+
+response(ibm.bc)
+
+
+attributes(ibm.bc)
+
+# To make a map, we'll need to use dismo's predict function
+
+ibm.bc.pred <- predict(object = ibm.bc, spain.worldclim)
+plot(ibm.bc.pred)
+
+points(ibm[,c("lon", "lat")], pch = 16, cex = 0.5)
+
+# Let's stop and think about what a Bioclim model assumes about our species' response to the environment
+
+```
+
+Class exercise: do the same but using the domain function.  Don't worry that plot(ibm.dm) doesn't work - there's just not a plot function associated with domain models in dismo.  We'll do a much better job of visualizing these models later.  
+
+```{r}
+
+ibm.dm <- dismo::domain(spain.worldclim, ibm[,c("lon", "lat")])
+
+attributes(ibm.dm)
+
+response(ibm.dm)
+
+# To make a map, we'll need to use dismo's predict function
+
+ibm.dm.pred <- predict(object = ibm.dm, spain.worldclim)
+plot(ibm.dm.pred)
+
+points(ibm[,c("lon", "lat")], pch = 16, cex = 0.5)
+```
+
+
+We can't really evaluate the predictive capacity of our models without some absence or background data, so let's make some.  Here's one way, using circular buffers around our occurrence points.
+
+```{r}
+buffer <- circles(ibm[,c("lon", "lat")], d=100000, lonlat=TRUE)
+
+plot(buffer)
+
+pol <-  gUnaryUnion(buffer@polygons)
+
+buffer.raster <- mask(spain.worldclim[[1]], pol)
+
+plot(buffer.raster)
+points(ibm[,c("lon", "lat")], pch = 16, cex = 0.5)
+
+background <- sampleRandom(buffer.raster, size=1000, xy=TRUE)
+head(background)
+
+# EXERCISE: let's create a data frame that just has lats and lons for presence
+# and another one that just has lats and longs for background data.  We'll
+# give them the same column names and order, just to keep it tidy
+
+ibm.pres <- ibm[,c("lon", "lat")]
+
+ibm.bg <- background[,c("x", "y")]
+colnames(ibm.bg) <- c("lon", "lat")
+
+head(ibm.pres)
+head(ibm.bg)
+
+plot(ibm.dm.pred)
+points(ibm.bg, pch = 4, cex = 0.5, col = "red")
+points(ibm.pres, pch = 16, cex = 0.5)
+
+# Evaluate the model using the evaluate function from dismo
+ibm.dm.eval <- evaluate(p = ibm.pres, a = ibm.bg, model = ibm.dm, x = spain.worldclim)
+
+ibm.dm.eval
+
+attributes(ibm.dm.eval)
+
+plot(ibm.dm.eval, "ROC")
+plot(ibm.dm.eval, "TPR")
+plot(ibm.dm.eval, "kappa")
+
+
+# Compare to bioclim model
+ibm.bc.eval <- evaluate(p = ibm.pres, a = ibm.bg, model = ibm.bc, x = spain.worldclim)
+
+ibm.bc.eval
+
+attributes(ibm.bc.eval)
+
+plot(ibm.bc.eval, "ROC")
+plot(ibm.bc.eval, "TPR")
+plot(ibm.bc.eval, "kappa")
+
+```
+
+That's only training data, though!  We usually prefer to set aside some data for testing.  We'll do a quick k-fold partitioning, with k = 5
+
+```{r}
+group <- kfold(ibm.pres, 5)
+group
+
+# All this does is randomly assign a number from 1 to 5 for each presence point.
+# To use these partitions for training and testing a model, we can do this:
+
+ibm.bc <- bioclim(spain.worldclim, ibm.pres[group != 1,])
+
+ibm.bc.pred <- predict(object = ibm.bc, spain.worldclim)
+plot(ibm.bc.pred)
+points(ibm.pres[group != 1,], pch = 16, cex = 0.5, col = "green")
+points(ibm.pres[group == 1,], pch = 16, cex = 0.5, col = "blue")
+
+# So now the green points are the ones used to train the model and the blue
+# ones are the ones we'll use to test it
+
+ibm.bc.eval.train <- evaluate(p = ibm.pres[group != 1,], a = ibm.bg, model = ibm.bc, x = spain.worldclim)
+
+ibm.bc.eval.test <- evaluate(p = ibm.pres[group == 1,], a = ibm.bg, model = ibm.bc, x = spain.worldclim)
+
+
+ibm.bc.eval.train
+ibm.bc.eval.test
+
+plot(ibm.bc.eval.train, "ROC")
+plot(ibm.bc.eval.test, "ROC")
+
+```
+
+We're going to fit a model manually using one more method: GLM.  This requires our data to be in a different format.
+
+See if you can format your data so that presence and background data are in the same table, with a new column "pres" that contains a value of 1 where the species is present and 0 where it isn't.
+
+```{r}
+pres <- c(rep(1, nrow(ibm.pres)), rep(0, nrow(ibm.bg)))
+latlon <- rbind(ibm.pres, ibm.bg)
+ibm.df <- cbind(latlon, pres)
+head(ibm.df)
+tail(ibm.df)
+
+# We also need to get our environmental data into our data frame
+
+pa.env <- extract(spain.worldclim, ibm.df[,1:2])
+pa.env <- as.data.frame(pa.env)
+pa.env$pres <- ibm.df$pres
+head(pa.env)
+
+
+
+# Here's one way to do it
+ibm.glm <- glm(pres ~ ., data = pa.env)
+plot(predict(spain.worldclim, ibm.glm))
+points(ibm.pres, pch =16, cex = 0.5, col = "black")
+
+# It's complaining about a rank-deficient fit, which means we have too many
+# predictor variables for the number of observations we have.  Let's
+# fit a simpler model.
+
+ibm.glm <- glm(pres ~ bio1 + bio8, data = pa.env)
+plot(predict(spain.worldclim, ibm.glm))
+points(ibm.pres, pch =16, cex = 0.5, col = "black")
+
+# What does our model look like?
+response(ibm.glm)
+
+# Let's fit a quadratic model instead
+ibm.glm <- glm(pres ~ poly(bio1, 2) + poly(bio8, 2), data = pa.env)
+ibm.glm
+plot(predict(spain.worldclim, ibm.glm))
+points(ibm.pres, pch =16, cex = 0.5, col = "black")
+# response(ibm.glm)
+
+# dismo does NOT like plotting responses for polynomial glms!
+# We'll come back to that when we get into ENMTools
+
+```
+
+
+We can also use these models to predict to other places or time periods.
+
+```{r}
+# You can now use that model to predict habitat suitability in other places
+# but note that this is SUPER slow for domain models
+plot(predict(all.worldclim, ibm.glm))
+
+```
+
+
+
+Exercise 1: Can you figure out how to evaluate the model ibm.glm?
+
+Exercise 2: Can you figure out how to increase the radius from which you draw your background data?  What happens to your model evaluation metrics when you do?

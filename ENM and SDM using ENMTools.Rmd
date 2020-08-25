@@ -107,6 +107,7 @@ interactive.plot.enmtools.species(monticola)
 
 Okay, we've got a species.  Let's build a model!  We'll start with the two most popular climate envelope models.
 
+## Bioclim
 
 ```{r bc}
 monticola.bc <- enmtools.bc(species = monticola, env = spain.worldclim, test.prop = 0.3, nback = 400)
@@ -118,6 +119,8 @@ visualize.enm(monticola.bc, spain.worldclim, layers = c("bio3", "bio8"))
 ```
 
 
+## Domain
+
 ```{r dm}
 monticola.dm <- enmtools.dm(species = monticola, env = spain.worldclim, test.prop = 0.3, nback = 400)
 monticola.dm
@@ -127,6 +130,7 @@ monticola.dm$response.plots[8]
 visualize.enm(monticola.dm, spain.worldclim, layers = c("bio3", "bio8"))
 ```
 
+## GLM
 
 ```{r glm}
 monticola.glm <- enmtools.glm(species = monticola, env = spain.worldclim)
@@ -207,7 +211,8 @@ interactive.plot.enmtools.model(monticola.glm)
 
 Hey wait!  What are these environment space model fit metrics?  We'll get to that in a little while.
 
-ENMTools also allows us to build models using other methods.  
+  
+## GAM
 
 ```{r gam}
 monticola.gam <- enmtools.gam(species = monticola, env = spain.worldclim, f = pres ~ bio3 + bio8 + bio11, test.prop = 0.3, nback = 400)
@@ -217,6 +222,9 @@ monticola.gam$response.plots
 visualize.enm(monticola.gam, spain.worldclim, layers = c("bio11", "bio8"))
 ```
 
+
+
+## Maxent
 
 If you have maxent installed and setup with dismo, you can even build maxent models.
 ```{r mx}
@@ -228,7 +236,9 @@ visualize.enm(monticola.mx, spain.worldclim, layers = c("bio3", "bio8"))
 
 ```
 
-Note that what ENMTools is doing for ENM construction is just acting as a front end for dismo and ppmlasso: the interface automates a bunch of stuff, but the underlying math is just dismo and ppmlasso.  Stored in the enmtools.model object (monticola.mx), there is a model we can project using dismo's predict function.  We can even use it to bring up the maxent model page in a web browser.
+Note that what ENMTools is doing for ENM construction is just acting as a front end for dismo and maxent: the interface automates a bunch of stuff, but the underlying math is just dismo and maxent.  Stored in the enmtools.model object (monticola.mx), there is a model we can project using dismo's predict function.  We can even use it to bring up the maxent model page in a web browser.
+
+## Poisson Point Process models using Lasso (ppmlasso)
 
 You can even build poisson point process models using ppmlasso.  Note: ppmlasso can take a LONG time to fit models with a bunch of predictors, so it's best to pass a formula here instead of using all 19 variables.
 
@@ -242,6 +252,7 @@ visualize.enm(monticola.ppm, spain.worldclim, layers = c("bio3", "bio8"))
 
 
 
+## Hypervolume
 
 One final option is to use Blonder et al.'s **hypervolume** package.  At present these are implemented as enmtools.hypervolume objects, rather than as enmtools.model objects.  They don't have as many cool options or visualizations, as many of the options for models don't make much sense here.  It's worth knowing that you can build them, though, as we will eventually be using them for some of the hypothesis tests.
 
@@ -254,16 +265,23 @@ enmtools.hypervolume(monticola, spain.worldclim[[c(1,8,12,17)]])
 
 Often we have applications where we want to take a model made in one time and place and project it to the distribution of environments in another time and place.  This is relatively easy to do in ENMTools!  For instance we can extrapolate our model across the entire world.
 ```{r}
-mx.pred <- predict(monticola.mx, all.worldclim)
+gam.pred <- predict(monticola.gam, all.worldclim)
 
-mx.pred$suitability
+gam.pred$suitability.plot
 ```
 
 It's a bit crazy to think that these lizards are going to live at the north pole, so let's look at the built-in plots that visualize the environments where the model was trained vs. where it's being projected.
 
 ```{r}
-mx.pred$threespace.plot
+gam.pred$threespace.plot
 ```
+
+Wanna know where your model's predictions are being reigned in by clamping?  ENMTools has got you covered.
+
+```{r}
+gam.pred$clamp.plot
+```
+
 
 We can look at the suitability projected in the future as well. **Note**: this involves downloading new layers so this bit of code may take a while to run.
 
@@ -274,13 +292,14 @@ spain.extent <- extent(-10, 4, 35, 45)
 spain.future <- crop(x = spain.future, y = spain.extent)
 names(spain.future) <- names(spain.worldclim)
 
-future.pred <- predict(monticola.mx, spain.future)
-future.pred$suitability
+future.pred <- predict(monticola.gam, spain.future)
+future.pred$suitability.plot
 future.pred$threespace.plot
+future.pred$clamp.plot
 ```
 
 Note that you can call **predict** on the model objects stored inside ENMTools models as well, but you often need to change the order.  For instance to predict using a maxent model, you pass in the environmental rasters first and the model second.  This is just a dismo thing to be aware of, there's no particular logic to either ordering that you need to understand.
 
-```{r mx-html}
-plot(predict(all.worldclim, monticola.mx$model))
+```{r gam-html}
+plot(predict(all.worldclim, monticola.gam$model))
 ```
